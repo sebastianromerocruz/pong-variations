@@ -1,13 +1,29 @@
 INCLUDE "hardware.inc"
 INCLUDE "lib/objects.asm"
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;                   P O N G  V A R I A T I O N S                   ;;
+;;——————————————————————————————————————————————————————————————————;;
+;;                      Sebastián Romero Cruz                       ;;
+;;                          Aestās MMXXVI                           ;;
+;;——————————————————————————————————————————————————————————————————;;
+;;                                                                  ;;
+;;                        E8 AB B8 E8 A1 8C                         ;;
+;;                        E7 84 A1 E5 B8 B8                         ;;
+;;                                                                  ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Header
+;; - Sets the entry point to the Initialise routine
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 SECTION "Header", ROM0[$100]
 
 	jp Initialise
 
 	ds $150 - @, 0 ; Make room for the header
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Initialise
 ;; - Shuts down audio circuitry
 ;; - Waits for VBlank to turn off LCD
@@ -15,7 +31,7 @@ SECTION "Header", ROM0[$100]
 ;; - Loads tilemap into VRAM
 ;; - Initializes display registers
 ;; - Enables vblank interrupt
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Initialise:
 	; Shut down audio circuitry
 	ld a, 0
@@ -49,23 +65,29 @@ WaitVBlank:
 	ld bc, Tilemap.End - Tilemap
 	call Memcpy
 
-	; Defines what tile index 0 looks like: a pattern where every pixel is 
+	; Defines what tile index 0 looks like: a pattern where every pixel is
 	; color 3
 	ld de, PaddleTile
 	ld hl, $9000
 	ld bc, PaddleTile.End - PaddleTile
 	call Memcpy
 
-	ld a, 80
-	ld [wYPaddle], a
+	ld a, 80         ; initial y-coord of paddle
+	ld [wYPlayer], a ; store initial y-coord of paddle
 
-	ld d, 0
+	; initial x,y-coord of ball
+	ld [wYBall], a   ; store initial y-coord of ball
+	ld a, 88         ; initial x-coord of ball
+	ld [wXBall], a   ; store initial x-coord of ball
+
+	ld d, 0 ; initialize OAM with 0s
 	ld hl, $FE00 ; start of OAM
 	ld bc, OAM_SIZE
 	call SetOAM
 
 	; Draw paddle on field
 	call RenderPaddle
+	call RenderBall
 
 	; Turn the LCD on
 	ld a, LCDC_ON | LCDC_BG_ON | LCDC_OBJ_ON
@@ -77,6 +99,7 @@ WaitVBlank:
 
 	ld a, %00100111
 	ld [rOBP0], a
+
 	; Initialise variables
 	ld a, 0
 	ld [wVBlankFlag], a
@@ -84,20 +107,31 @@ WaitVBlank:
 	; Enable vblank interrupt
 	ld a, IE_VBLANK
 	ld [rIE], a
-	ei
+	ei ; enable interrupts
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Main Game Loop
 ;; - Waits for vblank interrupt to set wVBlankFlag
 ;; - Reads ctrl pad and updates paddle position
 ;; - Renders paddle
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 GameLoop:
 	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 	;; VBLANK Wait
 	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 .localVBlank:
-	halt 
+	; Wait for vblank interrupt to set wVBlankFlag
+	; The vblank interrupt sets wVBlankFlag to 1, which is checked here. If it
+	; is 0, the program halts until the next interrupt.
+	; This ensures that the game logic runs in sync with the display refresh,
+	; preventing visual tearing and ensuring smooth gameplay.
+	; The halt instruction puts the CPU in a low-power state until the next
+	; interrupt occurs, which is efficient for battery-powered devices like
+	; the Game Boy.
+	; The check for wVBlankFlag being 0 ensures that the program only proceeds
+	; with game logic when a vblank has occurred, maintaining proper timing
+	; and synchroniSation with the display.
+	halt
 	ld a, [wVBlankFlag]
 	cp 0
 	jr z, .localVBlank
@@ -105,48 +139,55 @@ GameLoop:
 	ld a, 0
 	ld [wVBlankFlag], a
 
-	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-	;; Ctrl Pad Logic
-	;; - Selects ctrl pad (and burns some cycles)
-	;; - Reads button states, saves them in d-register
-	;; - Checks if down was pressed with JOYP_DOWN mask
-	;;		- checks for out of bounds
-	;; 		- dec player's y-coord if not
-	;;		- if not pressed, skips to up logic
-	;; - Checks if up was pressed with JOYP_DOWN mask and d-register (same 
-	;;	 logic)
-	;; - Renders paddle
-	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	; Ctrl Pad Logic
+	; - Selects ctrl pad (and burns some cycles)
+	; - Reads button states, saves them in d-register
+	; - Checks if down was pressed with JOYP_DOWN mask
+	;		- checks for out of bounds
+	; 		- dec player's y-coord if not
+	;		- if not pressed, skips to up logic
+	; - Checks if up was pressed with JOYP_DOWN mask and d-register (same
+	;	 logic)
+	; - Renders paddle
 	ld a, JOYP_GET_CTRL_PAD
 	call .nibbleise
 	ld d, a		  ; store button states
 
+	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	;; Check for down button press
+	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 	and a, JOYP_DOWN ; check if down was pressed
 	jr nz, .up ; if not, hop to up instructions
 
-	ld a, [wYPaddle]
+	ld a, [wYPlayer]
 
 	; clamp bottom
 	cp 136
 	jr z, .end
 
 	inc a
-	ld [wYPaddle], a
+	ld [wYPlayer], a
 
+	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	;; Check for up button press
+	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 .up
 	ld a, d
 	and a, JOYP_UP ; check if up was pressed
 	jr nz, .end ; if not, no button was pressed (for now)
 
-	ld a, [wYPaddle]
+	ld a, [wYPlayer]
 
 	; clamp top
 	cp 16
 	jr z, .end
 
 	dec a
-	ld [wYPaddle], a
+	ld [wYPlayer], a
 
+	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	;; Render Paddle and loop
+	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 .end
 	call RenderPaddle
 	jr GameLoop
@@ -190,7 +231,7 @@ Memcpy:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Set OAM
 ;; - Copies bc bytes from d-register to [hl], one byte at a time.
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;	
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 SetOAM:
 	ld a, d
 	ld [hli], a
@@ -200,14 +241,28 @@ SetOAM:
 	jr nz, SetOAM
 	ret
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+RenderBall:
+	ld a, [wYBall]
+	ld [hli], a
+
+	ld a, [wXBall]
+	ld [hli], a
+
+	ld a, 0
+	ld [hli], a
+
+	ld a, %00000000
+	ld [hli], a
+	ret
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Render Paddle
 ;; - Draws paddle on field
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 RenderPaddle:
 	; Draw paddle on field
 	ld hl, $FE00 ; start of OAM
-	ld a, [wYPaddle]
+	ld a, [wYPlayer]
 	ld c, a	 ; y=80
 	ld b, 3
 .paddleLoop
@@ -217,7 +272,7 @@ RenderPaddle:
 
 	ld a, 20 ; x =12 + 8 offset
 	ld [hli], a ; write x-coord and increment pointer
-	
+
 	ld a, 0 ; tile index
 	ld [hli], a ; write tile index and increment pointer
 
@@ -227,7 +282,7 @@ RenderPaddle:
 	ld a, c
 	add a, 8
 	ld c, a
-	
+
 	dec b ; sets the zero flag, so no need to cp 0
 	jr nz, .paddleLoop
 	ret
@@ -236,8 +291,14 @@ RenderPaddle:
 SECTION "Input Variables", WRAM0
 
 wVBlankFlag: db ; for vblank interrupt
-wYPaddle: db
+wYPlayer: 	 db
+wYBall: 	 db
+wXBall: 	 db
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Interrupt Handler
+;; - Sets wVBlankFlag to 1 when vblank interrupt occurs
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 SECTION "Interrupt Handler", ROM0[$0040]
 
 	push af
@@ -247,7 +308,7 @@ SECTION "Interrupt Handler", ROM0[$0040]
 
 	pop af
 
-	reti 
+	reti
 
 SECTION "Tilemap", ROM0
 
