@@ -1,4 +1,4 @@
-INCLUDE "hardware.inc"
+INCLUDE "lib/hardware.inc"
 INCLUDE "lib/objects.asm"
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -80,8 +80,13 @@ WaitVBlank:
 	ld a, 88         ; initial x-coord of ball
 	ld [wXBall], a   ; store initial x-coord of ball
 
+	; initial x,y-directions of ball
+	ld a, %11111111
+	ld [wYBallDir], a
+	ld [wXBallDir], a
+
 	ld d, 0 ; initialize OAM with 0s
-	ld hl, $FE00 ; start of OAM
+	ld hl, OAM_START ; start of OAM
 	ld bc, OAM_SIZE
 	call SetOAM
 
@@ -189,7 +194,10 @@ GameLoop:
 	;; Render Paddle and loop
 	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 .end
+    call UpdateBall
+
 	call RenderPaddle
+	call RenderBall
 	jr GameLoop
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -241,14 +249,33 @@ SetOAM:
 	jr nz, SetOAM
 	ret
 
+UpdateBall:
+    ld hl, BALL_OAM
+    ld a, [wYBallDir]
+    ld b, a
+	ld a, [wYBall]
+	add a, b
+	ld [wYBall], a
+	ld [hli], a
+
+	ld a, [wXBallDir]
+	ld b, a
+	ld a, [wXBall]
+	add a, b
+	ld [wXBall], a
+	ld [hli], a
+
+	ret
+
 RenderBall:
+    ld hl, BALL_OAM
 	ld a, [wYBall]
 	ld [hli], a
 
 	ld a, [wXBall]
 	ld [hli], a
 
-	ld a, 0
+	ld a, 1
 	ld [hli], a
 
 	ld a, %00000000
@@ -261,7 +288,7 @@ RenderBall:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 RenderPaddle:
 	; Draw paddle on field
-	ld hl, $FE00 ; start of OAM
+	ld hl, OAM_START ; start of OAM
 	ld a, [wYPlayer]
 	ld c, a	 ; y=80
 	ld b, 3
@@ -294,6 +321,11 @@ wVBlankFlag: db ; for vblank interrupt
 wYPlayer: 	 db
 wYBall: 	 db
 wXBall: 	 db
+wXBallDir:   db
+wYBallDir:   db
+
+DEF OAM_START EQU $FE00
+DEF BALL_OAM  EQU $FE0C
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Interrupt Handler
