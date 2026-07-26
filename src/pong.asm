@@ -7,6 +7,15 @@ SECTION "Header", ROM0[$100]
 
 	ds $150 - @, 0 ; Make room for the header
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Initialise
+;; - Shuts down audio circuitry
+;; - Waits for VBlank to turn off LCD
+;; - Loads tile data into VRAM
+;; - Loads tilemap into VRAM
+;; - Initializes display registers
+;; - Enables vblank interrupt
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Initialise:
 	; Shut down audio circuitry
 	ld a, 0
@@ -77,7 +86,16 @@ WaitVBlank:
 	ld [rIE], a
 	ei
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Main Game Loop
+;; - Waits for vblank interrupt to set wVBlankFlag
+;; - Reads ctrl pad and updates paddle position
+;; - Renders paddle
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 GameLoop:
+	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	;; VBLANK Wait
+	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 .localVBlank:
 	halt 
 	ld a, [wVBlankFlag]
@@ -87,6 +105,18 @@ GameLoop:
 	ld a, 0
 	ld [wVBlankFlag], a
 
+	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	;; Ctrl Pad Logic
+	;; - Selects ctrl pad (and burns some cycles)
+	;; - Reads button states, saves them in d-register
+	;; - Checks if down was pressed with JOYP_DOWN mask
+	;;		- checks for out of bounds
+	;; 		- dec player's y-coord if not
+	;;		- if not pressed, skips to up logic
+	;; - Checks if up was pressed with JOYP_DOWN mask and d-register (same 
+	;;	 logic)
+	;; - Renders paddle
+	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 	ld a, JOYP_GET_CTRL_PAD
 	call .nibbleise
 	ld d, a		  ; store button states
@@ -95,6 +125,11 @@ GameLoop:
 	jr nz, .up ; if not, hop to up instructions
 
 	ld a, [wYPaddle]
+
+	; clamp bottom
+	cp 136
+	jr z, .end
+
 	inc a
 	ld [wYPaddle], a
 
@@ -104,6 +139,11 @@ GameLoop:
 	jr nz, .end ; if not, no button was pressed (for now)
 
 	ld a, [wYPaddle]
+
+	; clamp top
+	cp 16
+	jr z, .end
+
 	dec a
 	ld [wYPaddle], a
 
@@ -111,6 +151,11 @@ GameLoop:
 	call RenderPaddle
 	jr GameLoop
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Reads the ctrl pad and returns the button states in the a-register
+;; - Selects ctrl pad (and burns some cycles)
+;; - Reads button states, returns them in a-register
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 .nibbleise:
 	; select ctrl pad
 	ld a, [rJOYP]
@@ -128,7 +173,10 @@ GameLoop:
 .knownret
 	ret
 
-; Copies bc bytes from [de] to [hl], one byte at a time.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Memcpy
+;; - Copies bc bytes from de-register to hl-register, one byte at a time.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Memcpy:
 	ld a, [de]
 	ld [hli], a
@@ -139,6 +187,10 @@ Memcpy:
 	jr nz, Memcpy
 	ret
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Set OAM
+;; - Copies bc bytes from d-register to [hl], one byte at a time.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;	
 SetOAM:
 	ld a, d
 	ld [hli], a
@@ -148,6 +200,10 @@ SetOAM:
 	jr nz, SetOAM
 	ret
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Render Paddle
+;; - Draws paddle on field
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 RenderPaddle:
 	; Draw paddle on field
 	ld hl, $FE00 ; start of OAM
@@ -175,6 +231,7 @@ RenderPaddle:
 	dec b ; sets the zero flag, so no need to cp 0
 	jr nz, .paddleLoop
 	ret
+
 
 SECTION "Input Variables", WRAM0
 
