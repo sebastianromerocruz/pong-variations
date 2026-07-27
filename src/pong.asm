@@ -167,7 +167,7 @@ GameLoop:
 	ld a, [wYPlayer]
 
 	; clamp bottom
-	cp 136
+	cp UPPER_BND
 	jr z, .end
 
 	inc a
@@ -184,7 +184,7 @@ GameLoop:
 	ld a, [wYPlayer]
 
 	; clamp top
-	cp 16
+	cp LOWER_BND
 	jr z, .end
 
 	dec a
@@ -251,6 +251,17 @@ SetOAM:
 
 UpdateBall:
     ld hl, BALL_OAM
+
+    ld a, [wYBall]
+    cp a, UPPER_BND
+
+    call nc, FlipY
+    jr nc, .yCoord
+
+    cp a, LOWER_BND
+    call c, FlipY
+
+.yCoord:
     ld a, [wYBallDir]
     ld b, a
 	ld a, [wYBall]
@@ -258,6 +269,7 @@ UpdateBall:
 	ld [wYBall], a
 	ld [hli], a
 
+.xCoord
 	ld a, [wXBallDir]
 	ld b, a
 	ld a, [wXBall]
@@ -314,6 +326,23 @@ RenderPaddle:
 	jr nz, .paddleLoop
 	ret
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Flip Y
+;; - Negates wYBallDir (two's complement: complement the bits, then +1),
+;;   reversing the ball's vertical direction on a top/bottom wall bounce.
+;; - Saves/restores af so it's safe to call conditionally (call nc/c, FlipY)
+;;   from UpdateBall without disturbing the caller's a-register or flags -
+;;   callers rely on a still holding [wYBall] and the flags from the
+;;   preceding cp after this returns.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+FlipY:
+	push af
+	ld a, [wYBallDir]
+	cpl
+	inc a
+	ld [wYBallDir], a
+	pop af
+	ret
 
 SECTION "Input Variables", WRAM0
 
@@ -326,6 +355,8 @@ wYBallDir:   db
 
 DEF OAM_START EQU $FE00
 DEF BALL_OAM  EQU $FE0C
+DEF UPPER_BND EQU 136
+DEF LOWER_BND EQU 16
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Interrupt Handler
