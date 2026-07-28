@@ -1,17 +1,17 @@
 INCLUDE "lib/hardware.inc"
 INCLUDE "lib/objects.asm"
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;                   P O N G  V A R I A T I O N S                   ;;
-;;——————————————————————————————————————————————————————————————————;;
-;;                      Sebastián Romero Cruz                       ;;
-;;                          Aestās MMXXVI                           ;;
-;;——————————————————————————————————————————————————————————————————;;
-;;                                                                  ;;
-;;                        E8 AB B8 E8 A1 8C                         ;;
-;;                        E7 84 A1 E5 B8 B8                         ;;
-;;                                                                  ;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;                        P O N G  V A R I A T I O N S                        ;;
+;;————————————————————————————————————————————————————————————————————————————;;
+;;                           Sebastián Romero Cruz                            ;;
+;;                               Aestās MMXXVI                                ;;
+;;————————————————————————————————————————————————————————————————————————————;;
+;;                                                                            ;;
+;;                             E8 AB B8 E8 A1 8C                              ;;
+;;                             E7 84 A1 E5 B8 B8                              ;;
+;;                                                                            ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Header
@@ -253,7 +253,7 @@ UpdateBall:
     ld hl, BALL_OAM
 
     ld a, [wYBall]
-    cp a, UPPER_BND
+    cp a, UPPER_BND_BALL
 
     call nc, FlipY
     jr nc, .yCoord
@@ -268,6 +268,30 @@ UpdateBall:
 	add a, b
 	ld [wYBall], a
 	ld [hli], a
+
+	; Paddle AABB collission check
+	; 1. if the ball's x-coord matches the paddle's right x-coord...
+	ld a, [wXBall]
+	cp a, PAD_X_COL
+	jr nz, .xCoord
+
+	; 2. if the ball's y-coord is under the paddle's top y-coord...
+	ld a, [wYPlayer]
+	ld b, a
+	ld a, [wYBall]
+	cp a, b
+	jr c, .xCoord
+
+	; 3. if the ball's y-coord is over the paddle's bottom y-coord
+	ld a, [wYPlayer]
+	add a, PAD_HEIGHT
+	ld b, a
+	ld a, [wYBall]
+	cp a, b
+	jr nc, .xCoord
+
+	; 4. then flip the x-direction
+	call FlipX
 
 .xCoord
 	ld a, [wXBallDir]
@@ -344,6 +368,15 @@ FlipY:
 	pop af
 	ret
 
+FlipX:
+	push af
+	ld a, [wXBallDir]
+	cpl
+	inc a
+	ld [wXBallDir], a
+	pop af
+	ret
+
 SECTION "Input Variables", WRAM0
 
 wVBlankFlag: db ; for vblank interrupt
@@ -353,10 +386,18 @@ wXBall: 	 db
 wXBallDir:   db
 wYBallDir:   db
 
-DEF OAM_START EQU $FE00
-DEF BALL_OAM  EQU $FE0C
-DEF UPPER_BND EQU 136
-DEF LOWER_BND EQU 16
+; OAM related
+DEF OAM_START      EQU $FE00
+DEF BALL_OAM       EQU $FE0C
+
+; Y-axis
+DEF UPPER_BND      EQU 136
+DEF UPPER_BND_BALL EQU 152
+DEF LOWER_BND      EQU 16
+
+; X-axis
+DEF PAD_X_COL  	   EQU 28
+DEF PAD_HEIGHT 	   EQU 24
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Interrupt Handler
