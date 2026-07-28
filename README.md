@@ -9,7 +9,7 @@
     <a href="https://zed.dev/"><img src="https://img.shields.io/badge/IDE-Zed-084CCF"></img></a>
 </p>
 
-A Game Boy ROM, hand-written in SM83 assembly (RGBDS), implementing a variation on Pong: a single player-controlled paddle bounces a ball off the top and bottom walls, aiming to keep it in play. Built from scratch — tile data, OAM sprite handling, VBlank-synced input, and collision detection — with no engine underneath it.
+A Game Boy ROM, hand-written in SM83 assembly (RGBDS), implementing a variation on Pong: a single player-controlled paddle bounces a ball off the top and bottom walls, aiming to keep it in play. Built from scratch: tile data, OAM sprite handling, VBlank-synced input, and collision detection, with no engine underneath it.
 
 <p align=center>
     <img src="assets/progress.gif"></img>
