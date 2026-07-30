@@ -77,7 +77,7 @@ WaitVBlank:
 
 	; initial x,y-coord of ball
 	ld [wYBall], a   ; store initial y-coord of ball
-	ld a, 88         ; initial x-coord of ball
+	ld a, BALL_X_ST  ; initial x-coord of ball
 	ld [wXBall], a   ; store initial x-coord of ball
 
 	; initial x,y-directions of ball
@@ -108,6 +108,7 @@ WaitVBlank:
 	; Initialise variables
 	ld a, 0
 	ld [wVBlankFlag], a
+	ld [wCooldownTimer], a
 
 	; Enable vblank interrupt
 	ld a, IE_VBLANK
@@ -168,7 +169,7 @@ GameLoop:
 
 	; clamp bottom
 	cp UPPER_BND
-	jr z, .end
+	jr z, .update
 
 	inc a
 	ld [wYPlayer], a
@@ -179,23 +180,32 @@ GameLoop:
 .up
 	ld a, d
 	and a, JOYP_UP ; check if up was pressed
-	jr nz, .end ; if not, no button was pressed (for now)
+	jr nz, .update ; if not, no button was pressed (for now)
 
 	ld a, [wYPlayer]
 
 	; clamp top
 	cp LOWER_BND
-	jr z, .end
+	jr z, .update
 
 	dec a
 	ld [wYPlayer], a
 
 	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-	;; Render Paddle and loop
+	;; Update, render, loop
 	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-.end
-    call UpdateBall
+.update
+	ld a, [wCooldownTimer]
+	cp COOLDOWN
+	jr z, .ballMoves
 
+	inc a
+	ld [wCooldownTimer], a
+	jr .render
+
+.ballMoves
+    call UpdateBall
+.render
 	call RenderPaddle
 	call RenderBall
 	jr GameLoop
@@ -294,6 +304,15 @@ UpdateBall:
 	call FlipX
 
 .xCoord
+	ld a, [wXBall]
+	cp LEFT_BOUND
+	call c, ResetX
+
+	ld a, [wXBall]
+	cp RGHT_BOUND
+	call nc, ResetX
+
+.setX
 	ld a, [wXBallDir]
 	ld b, a
 	ld a, [wXBall]
@@ -326,7 +345,7 @@ RenderPaddle:
 	; Draw paddle on field
 	ld hl, OAM_START ; start of OAM
 	ld a, [wYPlayer]
-	ld c, a	 ; y=80
+	ld c, a
 	ld b, 3
 .paddleLoop
 	ld a, c
@@ -377,14 +396,28 @@ FlipX:
 	pop af
 	ret
 
+ResetX:
+	; actual reset
+	push af
+	ld a, BALL_X_ST
+	ld [wXBall], a
+	call FlipX
+
+	ld a, 0
+	ld [wCooldownTimer], a
+
+	pop af
+	ret
+
 SECTION "Input Variables", WRAM0
 
-wVBlankFlag: db ; for vblank interrupt
-wYPlayer: 	 db
-wYBall: 	 db
-wXBall: 	 db
-wXBallDir:   db
-wYBallDir:   db
+wVBlankFlag:    db ; for vblank interrupt
+wYPlayer: 	    db
+wYBall: 	    db
+wXBall: 	    db
+wXBallDir:      db
+wYBallDir:      db
+wCooldownTimer: db
 
 ; OAM related
 DEF OAM_START      EQU $FE00
@@ -398,6 +431,13 @@ DEF LOWER_BND      EQU 16
 ; X-axis
 DEF PAD_X_COL  	   EQU 28
 DEF PAD_HEIGHT 	   EQU 24
+DEF BALL_X_ST	   EQU 88
+DEF LEFT_BOUND	   EQU 8
+DEF RGHT_BOUND	   EQU 160
+
+; Others
+DEF COLL_TOLER     EQU 5
+DEF COOLDOWN	   EQU 30
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Interrupt Handler
