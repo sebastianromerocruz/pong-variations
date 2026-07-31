@@ -74,6 +74,7 @@ WaitVBlank:
 
 	ld a, 80         ; initial y-coord of paddle
 	ld [wYPlayer], a ; store initial y-coord of paddle
+	ld [wYComputer], a ; store initial y-coord of paddle
 
 	; initial x,y-coord of ball
 	ld [wYBall], a   ; store initial y-coord of ball
@@ -91,7 +92,16 @@ WaitVBlank:
 	call SetOAM
 
 	; Draw paddle on field
+ 	ld hl, OAM_START ; start of OAM
+	ld a, [wYPlayer]
+	ld d, PAD_X_CRD
 	call RenderPaddle
+
+	ld hl, COM_OAM
+	ld a, [wYComputer]
+	ld d, COM_X_CRD
+	call RenderPaddle
+
 	call RenderBall
 
 	; Turn the LCD on
@@ -206,7 +216,16 @@ GameLoop:
 .ballMoves
     call UpdateBall
 .render
+	ld hl, OAM_START ; start of OAM; player
+	ld a, [wYPlayer]
+	ld d, PAD_X_CRD
 	call RenderPaddle
+
+	ld hl, COM_OAM ; start of OAM; player
+	ld a, [wYComputer]
+	ld d, COM_X_CRD
+	call RenderPaddle
+
 	call RenderBall
 	jr GameLoop
 
@@ -260,6 +279,7 @@ SetOAM:
 	ret
 
 UpdateBall:
+	; top and bottom walls
     ld hl, BALL_OAM
 
     ld a, [wYBall]
@@ -343,8 +363,6 @@ RenderBall:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 RenderPaddle:
 	; Draw paddle on field
-	ld hl, OAM_START ; start of OAM
-	ld a, [wYPlayer]
 	ld c, a
 	ld b, 3
 .paddleLoop
@@ -352,7 +370,7 @@ RenderPaddle:
 
 	ld [hli], a ; write y-coord and increment pointer
 
-	ld a, 20 ; x =12 + 8 offset
+	ld a, d ; x = d + 8 offset
 	ld [hli], a ; write x-coord and increment pointer
 
 	ld a, 0 ; tile index
@@ -411,31 +429,43 @@ ResetX:
 
 SECTION "Input Variables", WRAM0
 
-wVBlankFlag:    db ; for vblank interrupt
+; general
+wVBlankFlag:    db
+wCooldownTimer: db
+
+; paddles
 wYPlayer: 	    db
+wYComputer:		db
+
+; ball
 wYBall: 	    db
 wXBall: 	    db
 wXBallDir:      db
 wYBallDir:      db
-wCooldownTimer: db
 
 ; OAM related
 DEF OAM_START      EQU $FE00
 DEF BALL_OAM       EQU $FE0C
+DEF COM_OAM		   EQU $FE10
 
-; Y-axis
+; y-axis
 DEF UPPER_BND      EQU 136
 DEF UPPER_BND_BALL EQU 152
 DEF LOWER_BND      EQU 16
 
-; X-axis
+; x-axis
 DEF PAD_X_COL  	   EQU 28
+DEF PAD_X_CRD	   EQU 20
+DEF COM_X_COL	   EQU 132
+DEF COM_X_CRD	   EQU 146
+
 DEF PAD_HEIGHT 	   EQU 24
-DEF BALL_X_ST	   EQU 88
 DEF LEFT_BOUND	   EQU 8
 DEF RGHT_BOUND	   EQU 160
 
-; Others
+DEF BALL_X_ST	   EQU 88
+
+; general
 DEF COLL_TOLER     EQU 5
 DEF COOLDOWN	   EQU 30
 
