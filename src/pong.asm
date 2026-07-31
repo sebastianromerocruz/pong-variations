@@ -299,29 +299,40 @@ UpdateBall:
 	ld [wYBall], a
 	ld [hli], a
 
+	push hl
 	; Paddle AABB collission check
-	; 1. if the ball's x-coord matches the paddle's right x-coord...
-	ld a, [wXBall]
-	cp a, PAD_X_COL
-	jr nz, .xCoord
+	ld hl, wYPlayer
+	ld d, PAD_X_COL
+	call CheckPaddleCollision
 
-	; 2. if the ball's y-coord is under the paddle's top y-coord...
-	ld a, [wYPlayer]
-	ld b, a
-	ld a, [wYBall]
-	cp a, b
-	jr c, .xCoord
+	; Computer AABB collission check
+	ld hl, wYComputer
+	ld d, COM_X_COL
+	call CheckPaddleCollision
 
-	; 3. if the ball's y-coord is over the paddle's bottom y-coord
-	ld a, [wYPlayer]
-	add a, PAD_HEIGHT
-	ld b, a
-	ld a, [wYBall]
-	cp a, b
-	jr nc, .xCoord
+	pop hl
+	; ; 1. if the ball's x-coord matches the paddle's right x-coord...
+	; ld a, [wXBall]
+	; cp a, PAD_X_COL
+	; jr nz, .xCoord
 
-	; 4. then flip the x-direction
-	call FlipX
+	; ; 2. if the ball's y-coord is under the paddle's top y-coord...
+	; ld a, [wYPlayer]
+	; ld b, a
+	; ld a, [wYBall]
+	; cp a, b
+	; jr c, .xCoord
+
+	; ; 3. if the ball's y-coord is over the paddle's bottom y-coord
+	; ld a, [wYPlayer]
+	; add a, PAD_HEIGHT
+	; ld b, a
+	; ld a, [wYBall]
+	; cp a, b
+	; jr nc, .xCoord
+
+	; ; 4. then flip the x-direction
+	; call FlipX
 
 .xCoord
 	ld a, [wXBall]
@@ -342,7 +353,35 @@ UpdateBall:
 
 	ret
 
+CheckPaddleCollision:
+	; 1. if the ball's x-coord matches the paddle's right x-coord...
+	ld a, [wXBall]
+	cp a, d
+	jr nz, .endCheck
+
+	; 2. if the ball's y-coord is under the paddle's top y-coord...
+	ld a, [hl]
+	ld b, a
+	ld a, [wYBall]
+	cp a, b
+	jr c, .endCheck
+
+	; 3. if the ball's y-coord is over the paddle's bottom y-coord
+	ld a, [hl]
+	add a, PAD_HEIGHT
+	ld b, a
+	ld a, [wYBall]
+	cp a, b
+	jr nc, .endCheck
+
+	; 4. then flip the x-direction
+	call FlipX
+
+.endCheck
+	ret
+
 RenderBall:
+	push hl
     ld hl, BALL_OAM
 	ld a, [wYBall]
 	ld [hli], a
@@ -355,6 +394,7 @@ RenderBall:
 
 	ld a, %00000000
 	ld [hli], a
+	pop hl
 	ret
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -456,7 +496,7 @@ DEF LOWER_BND      EQU 16
 ; x-axis
 DEF PAD_X_COL  	   EQU 28
 DEF PAD_X_CRD	   EQU 20
-DEF COM_X_COL	   EQU 132
+DEF COM_X_COL	   EQU 138
 DEF COM_X_CRD	   EQU 146
 
 DEF PAD_HEIGHT 	   EQU 24
