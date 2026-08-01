@@ -128,8 +128,11 @@ WaitVBlank:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Main Game Loop
 ;; - Waits for vblank interrupt to set wVBlankFlag
-;; - Reads ctrl pad and updates paddle position
-;; - Renders paddle
+;; - Reads ctrl pad and updates the player paddle's position
+;; - Updates the computer paddle's position (AI)
+;; - Throttles and updates the ball's position once the cooldown timer set by
+;;   ResetX expires
+;; - Renders both paddles and the ball
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 GameLoop:
 	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -205,6 +208,10 @@ GameLoop:
 	;; Update, render, loop
 	;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 .update
+	; The computer paddle tracks the ball every frame, independent of the
+	; ball's own movement cooldown below, so it doesn't visibly stutter.
+	call UpdateComputer
+
 	ld a, [wCooldownTimer]
 	cp COOLDOWN
 	jr z, .ballMoves
@@ -251,33 +258,61 @@ GameLoop:
 .knownret
 	ret
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Memcpy
-;; - Copies bc bytes from de-register to hl-register, one byte at a time.
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Memcpy:
-	ld a, [de]
-	ld [hli], a
-	inc de
-	dec bc
-	ld a, b
-	or a, c
-	jr nz, Memcpy
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Update Computer
+;; - Moves the computer paddle (AI) one pixel per frame toward the ball
+;; - Compares the paddle's vertical midpoint (wYComputer + PAD_HEIGHT / 2,
+;;   a compile-time constant folded in by RGBDS) against the ball's raw
+;;   y-coord, since the paddle should center on the ball, not merely touch it
+;;   with its top edge
+;; - Moves down (increments y) if the paddle's midpoint is above the ball
+;;   (smaller y, since y grows downward), up (decrements y) otherwise
+;; - Clamps against the same UPPER_BND/LOWER_BND the player paddle uses
+;; - Saves/restores af so it's safe to call unconditionally from GameLoop
+;;   without disturbing the caller's a-register or flags
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+UpdateComputer:
+	push af
+	ld a, [wYComputer]
+	add a, PAD_HEIGHT / 2 ; evaluated at assemble time
+	ld b, a
+
+	ld a, [wYBall]
+
+	cp a, b
+	jr nc, .moveDown
+.moveUp ; ball higher
+	ld a, [wYComputer]
+	cp a, LOWER_BND
+	jr z, .end
+
+	dec a
+	ld [wYComputer], a
+
+	jr .end
+
+.moveDown ; ball lower
+	ld a, [wYComputer]
+	cp a, UPPER_BND
+	jr z, .end
+
+	inc a
+	ld [wYComputer], a
+
+.end
+	pop af
 	ret
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Set OAM
-;; - Copies bc bytes from d-register to [hl], one byte at a time.
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-SetOAM:
-	ld a, d
-	ld [hli], a
-	dec bc
-	ld a, b
-	or a, c
-	jr nz, SetOAM
-	ret
-
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Update Ball
+;; - Bounces the ball off the top/bottom walls (UPPER_BND_BALL/LOWER_BND) by
+;;   flipping wYBallDir, then advances the ball's y-coord by wYBallDir
+;; - Checks the ball against both paddles' bounding boxes and flips
+;;   wXBallDir on a hit (see CheckPaddleCollision)
+;; - Resets the ball to the center once it crosses either side wall
+;;   (LEFT_BOUND/RGHT_BOUND), then advances the ball's x-coord by wXBallDir
+;; - Writes the resulting y/x-coords into BALL_OAM via hl
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 UpdateBall:
 	; top and bottom walls
     ld hl, BALL_OAM
@@ -300,6 +335,7 @@ UpdateBall:
 	ld [hli], a
 
 	push hl
+
 	; Paddle AABB collission check
 	ld hl, wYPlayer
 	ld d, PAD_X_COL
@@ -311,28 +347,6 @@ UpdateBall:
 	call CheckPaddleCollision
 
 	pop hl
-	; ; 1. if the ball's x-coord matches the paddle's right x-coord...
-	; ld a, [wXBall]
-	; cp a, PAD_X_COL
-	; jr nz, .xCoord
-
-	; ; 2. if the ball's y-coord is under the paddle's top y-coord...
-	; ld a, [wYPlayer]
-	; ld b, a
-	; ld a, [wYBall]
-	; cp a, b
-	; jr c, .xCoord
-
-	; ; 3. if the ball's y-coord is over the paddle's bottom y-coord
-	; ld a, [wYPlayer]
-	; add a, PAD_HEIGHT
-	; ld b, a
-	; ld a, [wYBall]
-	; cp a, b
-	; jr nc, .xCoord
-
-	; ; 4. then flip the x-direction
-	; call FlipX
 
 .xCoord
 	ld a, [wXBall]
@@ -353,6 +367,18 @@ UpdateBall:
 
 	ret
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Check Paddle Collision
+;; - Performs an AABB (axis-aligned bounding box) check between the ball and
+;;   a paddle: hl points at the paddle's y-coord variable (wYPlayer or
+;;   wYComputer), d holds the paddle's collision x-coord (PAD_X_COL or
+;;   COM_X_COL)
+;; 1. Bails if the ball's x-coord doesn't match the paddle's collision plane
+;; 2. Bails if the ball's y-coord is above the paddle's top edge
+;; 3. Bails if the ball's y-coord is below the paddle's bottom edge
+;;    (top + PAD_HEIGHT)
+;; 4. Otherwise the ball is within the paddle's span, so flip wXBallDir
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 CheckPaddleCollision:
 	; 1. if the ball's x-coord matches the paddle's right x-coord...
 	ld a, [wXBall]
@@ -380,26 +406,72 @@ CheckPaddleCollision:
 .endCheck
 	ret
 
-RenderBall:
-	push hl
-    ld hl, BALL_OAM
-	ld a, [wYBall]
-	ld [hli], a
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Flip Y
+;; - Negates wYBallDir (two's complement: complement the bits, then +1),
+;;   reversing the ball's vertical direction on a top/bottom wall bounce.
+;; - Saves/restores af so it's safe to call conditionally (call nc/c, FlipY)
+;;   from UpdateBall without disturbing the caller's a-register or flags -
+;;   callers rely on a still holding [wYBall] and the flags from the
+;;   preceding cp after this returns.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+FlipY:
+	push af
+	ld a, [wYBallDir]
+	cpl
+	inc a
+	ld [wYBallDir], a
+	pop af
+	ret
 
-	ld a, [wXBall]
-	ld [hli], a
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Flip X
+;; - Negates wXBallDir (two's complement), reversing the ball's horizontal
+;;   direction on a paddle bounce.
+;; - Saves/restores af for the same reason as FlipY: callers invoke it
+;;   conditionally (call, FlipX from CheckPaddleCollision; call c/nc, ResetX
+;;   from UpdateBall) and rely on the flags/a-register surviving the call.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+FlipX:
+	push af
+	ld a, [wXBallDir]
+	cpl
+	inc a
+	ld [wXBallDir], a
+	pop af
+	ret
 
-	ld a, 1
-	ld [hli], a
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Reset X
+;; - Called from UpdateBall when the ball crosses either side wall, i.e. a
+;;   "score"
+;; - Recenters the ball at BALL_X_ST and flips wXBallDir so it launches back
+;;   toward the paddle that just conceded
+;; - Resets wCooldownTimer to 0, which briefly pauses UpdateBall (see
+;;   GameLoop's .update) before the ball starts moving again
+;; - Saves/restores af so it's safe to call conditionally (call c/nc, ResetX)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ResetX:
+	; actual reset
+	push af
+	ld a, BALL_X_ST
+	ld [wXBall], a
+	call FlipX
 
-	ld a, %00000000
-	ld [hli], a
-	pop hl
+	ld a, 0
+	ld [wCooldownTimer], a
+
+	pop af
 	ret
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Render Paddle
-;; - Draws paddle on field
+;; - Draws a paddle on the field as three stacked 8x8 tiles
+;; - a holds the paddle's top y-coord, d holds its x-coord, hl points at the
+;;   first of its 4 OAM entries (OAM_START for the player, COM_OAM for the
+;;   computer)
+;; - Loops 3 times, writing y, x, tile index 0, and no-flip/palette-0 attrs
+;;   for each tile, advancing y by 8 each iteration to stack them vertically
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 RenderPaddle:
 	; Draw paddle on field
@@ -428,43 +500,54 @@ RenderPaddle:
 	ret
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Flip Y
-;; - Negates wYBallDir (two's complement: complement the bits, then +1),
-;;   reversing the ball's vertical direction on a top/bottom wall bounce.
-;; - Saves/restores af so it's safe to call conditionally (call nc/c, FlipY)
-;;   from UpdateBall without disturbing the caller's a-register or flags -
-;;   callers rely on a still holding [wYBall] and the flags from the
-;;   preceding cp after this returns.
+;; Render Ball
+;; - Writes the ball's single OAM entry (BALL_OAM) from wYBall/wXBall, using
+;;   tile index 1 and no-flip/palette-0 attrs
+;; - Preserves hl across the call (push/pop) since callers (UpdateBall via
+;;   GameLoop, Initialise) rely on hl for their own OAM bookkeeping
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-FlipY:
-	push af
-	ld a, [wYBallDir]
-	cpl
-	inc a
-	ld [wYBallDir], a
-	pop af
+RenderBall:
+	push hl
+    ld hl, BALL_OAM
+	ld a, [wYBall]
+	ld [hli], a
+
+	ld a, [wXBall]
+	ld [hli], a
+
+	ld a, 1
+	ld [hli], a
+
+	ld a, %00000000
+	ld [hli], a
+	pop hl
 	ret
 
-FlipX:
-	push af
-	ld a, [wXBallDir]
-	cpl
-	inc a
-	ld [wXBallDir], a
-	pop af
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Memcpy
+;; - Copies bc bytes from de-register to hl-register, one byte at a time.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Memcpy:
+	ld a, [de]
+	ld [hli], a
+	inc de
+	dec bc
+	ld a, b
+	or a, c
+	jr nz, Memcpy
 	ret
 
-ResetX:
-	; actual reset
-	push af
-	ld a, BALL_X_ST
-	ld [wXBall], a
-	call FlipX
-
-	ld a, 0
-	ld [wCooldownTimer], a
-
-	pop af
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Set OAM
+;; - Copies bc bytes from d-register to [hl], one byte at a time.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+SetOAM:
+	ld a, d
+	ld [hli], a
+	dec bc
+	ld a, b
+	or a, c
+	jr nz, SetOAM
 	ret
 
 SECTION "Input Variables", WRAM0

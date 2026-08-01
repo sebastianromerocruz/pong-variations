@@ -44,10 +44,12 @@ src/
 In active development. Currently:
 
 - Paddle renders as three stacked 8×8 tiles and moves with Up/Down, clamped to the screen bounds.
+- Second paddle (computer-controlled) renders on the opposite side of the field.
 - Ball renders and moves diagonally every frame, bouncing off the top and bottom walls.
-- Ball-paddle collision detection is wired up (bounding-box check against the paddle's X plane and Y span).
+- Ball-paddle collision detection is wired up against both paddles (bounding-box check against each paddle's X plane and Y span).
+- Computer paddle tracks the ball's y-position every frame, moving one pixel at a time toward it, clamped to the screen bounds.
 - Ball resets after any player "scores".
-- No scoring, AI, second paddle, or right-wall handling yet.
+- No scoring display yet.
 
 <br>
 
